@@ -124,16 +124,25 @@ let scene, camera, renderer;
 let paddle, ball;
 let bricks = [];
 let ballVelocity = new THREE.Vector2(4, -4);
-let paddleVelocity = 0;
 let score = 0;
 let lives = 3;
 let gameStarted = false;
 let gameOver = false;
 let gameWon = false;
 
+// Visible world size (may be larger than the 800x600 playfield on
+// non-4:3 screens so the playfield is never stretched or cropped)
+let viewWidth = GAME_WIDTH;
+let viewHeight = GAME_HEIGHT;
+
 // Input
-let mouseX = 0;
 let keys = {};
+let activePointerId = null;
+let lastFrameTime = 0;
+
+function clamp(value, min, max) {
+    return Math.max(min, Math.min(max, value));
+}
 
 // UI elements
 const scoreElement = document.getElementById('score');
@@ -146,6 +155,7 @@ const restartGameOver = document.getElementById('restartGameOver');
 const restartGameWin = document.getElementById('restartGameWin');
 const finalScoreElement = document.getElementById('finalScore');
 const winScoreElement = document.getElementById('winScore');
+const canvas = document.getElementById('canvas');
 
 function init() {
     // Scene setup
@@ -163,29 +173,33 @@ function init() {
     camera.position.z = 500;
     
     // Renderer setup
-    const canvas = document.getElementById('canvas');
     renderer = new THREE.WebGLRenderer({ canvas: canvas, antialias: true });
-    renderer.setSize(window.innerWidth, window.innerHeight);
     renderer.setClearColor(0x000000, 0);
+    updateViewSize();
     
     // Create game objects
     createPaddle();
     createBall();
     createBricks();
+    createWalls();
     
-    // Event listeners
+    // Event listeners. Pointer events cover mouse, touch and pen in one path.
     window.addEventListener('resize', onWindowResize);
-    document.addEventListener('mousemove', onMouseMove);
+    window.addEventListener('orientationchange', onWindowResize);
+    document.addEventListener('pointerdown', onPointerDown);
+    document.addEventListener('pointermove', onPointerMove);
+    document.addEventListener('pointerup', onPointerUp);
+    document.addEventListener('pointercancel', onPointerUp);
     document.addEventListener('keydown', onKeyDown);
     document.addEventListener('keyup', onKeyUp);
-    document.addEventListener('click', onClick);
+    document.addEventListener('contextmenu', (event) => event.preventDefault());
     
     startButton.addEventListener('click', startGame);
     restartGameOver.addEventListener('click', restartGame);
     restartGameWin.addEventListener('click', restartGame);
     
     // Start game loop
-    animate();
+    requestAnimationFrame(animate);
 }
 
 function createPaddle() {
@@ -269,6 +283,29 @@ function createBricks() {
     }
 }
 
+function createWalls() {
+    // Thin frame drawn just outside the playfield so the ball's bounce
+    // limits stay visible when the view is wider/taller than the field.
+    const material = new THREE.MeshBasicMaterial({
+        color: 0x4ecdc4,
+        transparent: true,
+        opacity: 0.18
+    });
+    const t = 4;
+
+    const walls = [
+        { w: t, h: GAME_HEIGHT + t * 2, x: -GAME_WIDTH / 2 - t / 2, y: 0 },
+        { w: t, h: GAME_HEIGHT + t * 2, x: GAME_WIDTH / 2 + t / 2, y: 0 },
+        { w: GAME_WIDTH + t * 2, h: t, x: 0, y: GAME_HEIGHT / 2 + t / 2 }
+    ];
+
+    walls.forEach(({ w, h, x, y }) => {
+        const wall = new THREE.Mesh(new THREE.BoxGeometry(w, h, 5), material);
+        wall.position.set(x, y, -2);
+        scene.add(wall);
+    });
+}
+
 function startGame() {
     initAudio();
     sounds.gameStart();
@@ -309,20 +346,84 @@ function updateUI() {
     livesElement.textContent = lives;
 }
 
-function onWindowResize() {
-    renderer.setSize(window.innerWidth, window.innerHeight);
+function updateViewSize() {
+    const width = Math.max(window.innerWidth, 1);
+    const height = Math.max(window.innerHeight, 1);
+    const aspect = width / height;
+    const gameAspect = GAME_WIDTH / GAME_HEIGHT;
+
+    // Fit the whole 800x600 playfield on screen ("contain"), never stretching.
+    // Extra space reveals the background gradient instead of distorting the game.
+    if (aspect >= gameAspect) {
+        viewHeight = GAME_HEIGHT;
+        viewWidth = GAME_HEIGHT * aspect;
+    } else {
+        viewWidth = GAME_WIDTH;
+        viewHeight = GAME_WIDTH / aspect;
+    }
+
+    camera.left = -viewWidth / 2;
+    camera.right = viewWidth / 2;
+    camera.top = viewHeight / 2;
+    camera.bottom = -viewHeight / 2;
+    camera.updateProjectionMatrix();
+
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+    renderer.setSize(width, height, false);
 }
 
-function onMouseMove(event) {
-    initAudio();
-    if (!gameStarted || gameOver || gameWon) return;
-    
-    const mouseXNormalized = (event.clientX / window.innerWidth) * 2 - 1;
-    mouseX = mouseXNormalized * GAME_WIDTH / 2;
-    
-    // Clamp paddle position
+function onWindowResize() {
+    updateViewSize();
+}
+
+// Convert a screen x position into playfield world coordinates.
+function movePaddleTo(clientX) {
+    const rect = canvas.getBoundingClientRect();
+    if (rect.width === 0) return;
+
+    const ratio = (clientX - rect.left) / rect.width;
+    const worldX = camera.left + ratio * (camera.right - camera.left);
     const halfPaddle = PADDLE_WIDTH / 2;
-    paddle.position.x = Math.max(-GAME_WIDTH / 2 + halfPaddle, Math.min(GAME_WIDTH / 2 - halfPaddle, mouseX));
+
+    paddle.position.x = clamp(
+        worldX,
+        -GAME_WIDTH / 2 + halfPaddle,
+        GAME_WIDTH / 2 - halfPaddle
+    );
+}
+
+function onPointerDown(event) {
+    // Let overlay buttons handle their own taps/clicks.
+    if (event.target instanceof Element && event.target.closest('button')) return;
+
+    initAudio();
+
+    if (event.pointerType !== 'mouse') {
+        activePointerId = event.pointerId;
+    }
+
+    if (!gameStarted && !gameOver && !gameWon) {
+        startGame();
+    }
+
+    if (gameStarted && !gameOver && !gameWon) {
+        movePaddleTo(event.clientX);
+    }
+}
+
+function onPointerMove(event) {
+    if (!gameStarted || gameOver || gameWon) return;
+
+    const isDragging = activePointerId !== null && event.pointerId === activePointerId;
+    if (event.pointerType !== 'mouse' && !isDragging) return;
+
+    movePaddleTo(event.clientX);
+}
+
+function onPointerUp(event) {
+    if (event.pointerId === activePointerId) {
+        activePointerId = null;
+    }
 }
 
 function onKeyDown(event) {
@@ -337,41 +438,36 @@ function onKeyDown(event) {
             restartGame();
         }
     }
+
+    if (event.code === 'ArrowLeft' || event.code === 'ArrowRight') {
+        event.preventDefault();
+    }
 }
 
 function onKeyUp(event) {
     keys[event.code] = false;
 }
 
-function onClick() {
-    initAudio();
-    sounds.click();
-    if (!gameStarted && !gameOver && !gameWon) {
-        startGame();
-    }
-}
-
-function updatePaddle() {
+function updatePaddle(step) {
     if (!gameStarted || gameOver || gameWon) return;
     
-    const halfPaddle = PADDLE_WIDTH / 2;
-    
     if (keys['ArrowLeft'] || keys['KeyA']) {
-        paddle.position.x -= 8;
+        paddle.position.x -= 8 * step;
     }
     if (keys['ArrowRight'] || keys['KeyD']) {
-        paddle.position.x += 8;
+        paddle.position.x += 8 * step;
     }
     
     // Clamp paddle position
-    paddle.position.x = Math.max(-GAME_WIDTH / 2 + halfPaddle, Math.min(GAME_WIDTH / 2 - halfPaddle, paddle.position.x));
+    const halfPaddle = PADDLE_WIDTH / 2;
+    paddle.position.x = clamp(paddle.position.x, -GAME_WIDTH / 2 + halfPaddle, GAME_WIDTH / 2 - halfPaddle);
 }
 
-function updateBall() {
+function updateBall(step) {
     if (!gameStarted || gameOver || gameWon) return;
     
-    ball.position.x += ballVelocity.x;
-    ball.position.y += ballVelocity.y;
+    ball.position.x += ballVelocity.x * step;
+    ball.position.y += ballVelocity.y * step;
     
     // Wall collisions
     if (ball.position.x > GAME_WIDTH / 2 - BALL_RADIUS || ball.position.x < -GAME_WIDTH / 2 + BALL_RADIUS) {
@@ -477,11 +573,18 @@ function updateBall() {
     }
 }
 
-function animate() {
+function animate(time) {
     requestAnimationFrame(animate);
     
-    updatePaddle();
-    updateBall();
+    if (!lastFrameTime) lastFrameTime = time;
+    // Seconds since last frame, capped so a hitch/tab-switch can't teleport the ball.
+    const delta = Math.min((time - lastFrameTime) / 1000, 1 / 30);
+    lastFrameTime = time;
+    // Velocities are tuned in "units per 60hz frame", so scale by frame count.
+    const step = delta * 60;
+    
+    updatePaddle(step);
+    updateBall(step);
     
     renderer.render(scene, camera);
 }
