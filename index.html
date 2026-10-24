@@ -1,0 +1,51 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Breakout - Three.js</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <div id="ui">
+        <div>Score: <span id="score">0</span></div>
+        <div>Lives: <span id="lives">3</span></div>
+    </div>
+    
+    <div id="gameOver" class="overlay hidden">
+        <div class="panel">
+            <h1>Game Over</h1>
+            <p>Final Score: <span id="finalScore">0</span></p>
+            <button id="restartGameOver">Play Again</button>
+        </div>
+    </div>
+    
+    <div id="gameWin" class="overlay hidden">
+        <div class="panel">
+            <h1>You Win!</h1>
+            <p>Final Score: <span id="winScore">0</span></p>
+            <button id="restartGameWin">Play Again</button>
+        </div>
+    </div>
+    
+    <div id="startScreen" class="overlay">
+        <div class="panel">
+            <h1>BREAKOUT</h1>
+            <p>Use Mouse or Arrow Keys to move the paddle</p>
+            <p>Click or Press Space to Start</p>
+            <button id="startButton">Start Game</button>
+        </div>
+    </div>
+    
+    <canvas id="canvas"></canvas>
+    
+    <script type="importmap">
+        {
+            "imports": {
+                "three": "https://unpkg.com/three@0.160.0/build/three.module.js"
+            }
+        }
+    </script>
+    <script type="module" src="main.js"></script>
+</body>
+</html>
